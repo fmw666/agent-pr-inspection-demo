@@ -1,15 +1,14 @@
 name: 🚦 Serial AI PR Orchestrator
 
 on:
-  pull_request_review:
-    types: [submitted]
+  check_run:
+    types: [completed]
 
 jobs:
   trigger-greptile-after-cursor:
     name: 🛡️ Trigger Phase 2 (Greptile)
-    # Only run this job if the review was an APPROVAL from the Cursor bot
-    # Note: Replace 'cursor-automations[bot]' with the exact GitHub login of the Cursor bot if different.
-    if: github.event.review.state == 'approved' && contains(github.event.review.user.login, 'cursor')
+    # Only trigger when the 'Cursor Automation' check run has completed with success
+    if: github.event.check_run.name == 'Cursor Automation: auto-PR test' && github.event.check_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -18,16 +17,26 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const prNumber = context.payload.pull_request.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
+            // Find the pull request associated with the commit that triggered the check_run
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${github.event.check_run.check_suite.head_branch}`,
+              state: 'open'
+            });
             
-            console.log(`Cursor logic review passed! Triggering Greptile for PR #${prNumber}...`);
+            if (prs.data.length === 0) {
+              console.log("No open PR found for this check run. Skipping Greptile trigger.");
+              return;
+            }
             
-            // Trigger Greptile by posting a command comment
+            const prNumber = prs.data[0].number;
+            
+            console.log(`Cursor logic check passed (Status: Success)! Triggering Greptile for PR #${prNumber}...`);
+            
             await github.rest.issues.createComment({
-              owner: owner,
-              repo: repo,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               issue_number: prNumber,
               body: "🚀 **[Phase 1] Cursor Logic Review Passed!**\n\n@greptile-apps[bot] Please perform the [Phase 2] Architecture and Blast Radius review."
             });
