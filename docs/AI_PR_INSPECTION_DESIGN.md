@@ -1,55 +1,47 @@
-# 双 AI 引擎 PR 质检架构设计 (Dual-AI PR Inspection Architecture)
+# 串行双 AI 引擎 PR 质检架构设计 (Serial Dual-AI PR Inspection Architecture)
 
-## 1. 架构愿景
-本仓库验证了一套**企业级零妥协**的自动化代码审查流水线。
-核心理念是将 AI 从单一的“代码补全助手”升级为“自动化代码审查门神”。我们采用**双 AI 引擎（Cursor Automations + Greptile）**互为表里，彻底封锁 `main` 分支，所有代码必须经过双重 AI 的严苛质检与 Approve 才能进入 Merge Queue。
+## 1. 架构愿景 (不留技术债)
+本仓库旨在打造**企业级零妥协**的自动化代码审查流水线。
+我们摒弃了容易造成“评论轰炸”和“算力浪费”的原生并行模式，采用了极其严谨的**串行漏斗流水线（Serial Funnel Pipeline）**。
+核心理念：**微观逻辑不通过，宏观架构不审查。**
 
-## 2. 角色分工与职责
+## 2. 串行漏斗工作流 (Serial Workflow)
 
-参考 OpenClaw 官方的最佳实践，我们将质检职责划分为“微观逻辑”与“宏观架构”两层：
-
-### ⚔️ 逻辑与边界猎犬：Cursor Automations
-* **核心职责**：深度运行时逻辑（Runtime Logic）、状态机验证、边界条件防守。
-* **表现形式**：逐行 Review (Inline Comments)，强制执行 `[P1/P2/P3]` 严重级别定级。
-* **审查拦截**：如果发现 P1 或 P2 级别漏洞，强制 `Request Changes`，拒绝合并。
-
-### 🛡️ 架构与工程卫士：Greptile
-* **核心职责**：代码库全局上下文（Codebase Context）、架构一致性、测试覆盖率关联、冗余代码（Code Smell）检测。
-* **表现形式**：全局审查报告，评估爆炸半径（Blast Radius），并在发现架构不合理处提供 `<details><summary>Prompt To Fix With AI</summary>`。
-* **审查拦截**：如果修改破坏了未变更模块的依赖关系或遗漏了对应的单元测试，强制要求补充测试后方可放行。
-
----
-
-## 3. Cursor Automations 专属 Prompt 配置
-
-在 Cursor 的 Automations 后台，请为该仓库的 PR 触发器注入以下指令（System Instructions）：
-
-```markdown
-You are an extremely rigorous Senior Staff Engineer and the primary Logic Inspector for this repository.
-Your task is to review the code Diff of this Pull Request.
-
-**Focus Areas:**
-1. Runtime Logic: Deadlocks, memory leaks, null pointer exceptions, and unhandled promises.
-2. Edge Cases: Are there input validations missing? Will this fail under extreme conditions?
-3. State Management: Are state transitions safe and race-condition free?
-
-**Grading System:**
-For EVERY issue you identify, you MUST prefix your inline comment with one of the following severity badges:
-- `[P1] (Critical)`: Security vulnerabilities, fatal crashes, or severe logic regressions. 
-- `[P2] (High)`: Unhandled edge cases, performance bottlenecks, or incorrect error handling.
-- `[P3] (Low)`: Code style, naming conventions, or minor refactoring suggestions.
-
-**Action Rules:**
-- If you find ANY `[P1]` or `[P2]` issues, you MUST submit `Request Changes` and block the PR.
-- If the code is flawless or only contains `[P3]` issues, you MUST submit `Approve` with an encouraging remark.
-- Always provide your feedback as INLINE comments on the specific lines of code.
+```text
+[Developer Pushes Code]
+         |
+         v
+=========================================
+ ⚔️ Phase 1: 逻辑与边界猎犬 (Cursor)
+=========================================
+- 触发机制：GitHub PR Opened / Synchronize
+- 核心职责：运行时逻辑、状态机、空指针、规范 (P1/P2/P3 拦截)。
+- 行为：如果不合格，直接打回 (Request Changes)。流程终止。
+         |
+    (If Approved ✅)
+         |
+         v
+=========================================
+ 🤖 调度中枢: GitHub Actions Orchestrator
+=========================================
+- 触发机制：监听到 Cursor 点了 Approve。
+- 行为：自动在 PR 中发送指令 `@greptile Please review` 唤醒第二阶段。
+         |
+         v
+=========================================
+ 🛡️ Phase 2: 架构与工程卫士 (Greptile)
+=========================================
+- 触发机制：被中枢的指令唤醒。
+- 核心职责：全局上下文冲突、架构一致性、爆炸半径评估。
+- 行为：全局审查，最终 Approve。
+         |
+    (If Approved ✅)
+         |
+         v
+[ 🚦 凑齐 2 个 Approve -> Merge Queue 集成 ]
 ```
 
-## 4. GitHub 分支保护与 Merge Queue 配合
-
-1. `main` 分支必须开启 **Require pull request reviews before merging**。
-2. 将 **Required approving review count** 设置为 `2`（等待 Cursor 和 Greptile 双重 Approve）。
-3. 开启 **Require merge queue**，当两个 AI 都绿灯放行后，PR 自动进入合并队列排队集成，避免并发冲突。
-
----
-*此文档由 范茂伟(范大哥) 与 专属AI助理 共同设计与总结。*
+## 3. 为什么必须是串行？
+1. **拦截漏斗与算力控制**：如果代码连最基础的语法和逻辑漏洞（Phase 1）都过不去，直接打回。绝不浪费昂贵的全局 RAG 检索算力（Phase 2）去分析一份烂代码的架构。
+2. **极佳的开发者体验 (DX)**：避免并行模式下的“报错轰炸”。开发者按照阶梯式的反馈进行修复，专注解决当前最紧要的阻碍。
+3. **架构的绝对纯洁性**：保证了高级架构审查是在“代码逻辑已经完美”的基础之上进行的，避免了 AI 产生由于低级 Bug 带来的分析幻觉。

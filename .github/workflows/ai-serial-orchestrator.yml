@@ -1,0 +1,33 @@
+name: 🚦 Serial AI PR Orchestrator
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  trigger-greptile-after-cursor:
+    name: 🛡️ Trigger Phase 2 (Greptile)
+    # Only run this job if the review was an APPROVAL from the Cursor bot
+    # Note: Replace 'cursor-automations[bot]' with the exact GitHub login of the Cursor bot if different.
+    if: github.event.review.state == 'approved' && contains(github.event.review.user.login, 'cursor')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 📢 Trigger Greptile Architecture Review
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            console.log(`Cursor logic review passed! Triggering Greptile for PR #${prNumber}...`);
+            
+            // Trigger Greptile by posting a command comment
+            await github.rest.issues.createComment({
+              owner: owner,
+              repo: repo,
+              issue_number: prNumber,
+              body: "🚀 **[Phase 1] Cursor Logic Review Passed!**\n\n@greptile-apps[bot] Please perform the [Phase 2] Architecture and Blast Radius review."
+            });
